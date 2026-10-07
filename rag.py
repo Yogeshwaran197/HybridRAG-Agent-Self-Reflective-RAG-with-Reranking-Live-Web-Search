@@ -20,6 +20,7 @@ from langchain_community.vectorstores import Chroma
 
 load_dotenv()
 
+
 COHERE_API_KEY = os.getenv("COHERE_API_KEY")
 
 
