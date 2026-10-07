@@ -7,11 +7,12 @@ from langchain_core.output_parsers import StrOutputParser
 from langchain_core.documents import Document
 from langchain_core.tools import tool
 from langgraph.graph import StateGraph, START, END
+from langgraph.graph.message import add_messages
 from langgraph.types import Command , Interrupt
 from langgraph.checkpoint.postgres import PostgresSaver
 from psycopg import Connection
 from psycopg.rows import dict_row
-from typing import TypedDict , List
+from typing import TypedDict , List, Annotated , Sequence, Literal
 from pydantic import BaseModel, Field
 from rag import hybrid_search
 
@@ -53,6 +54,32 @@ def retriever_tool(query : str):
         result.append(f"Document : {d.page_content}")
     
     return "\n\n".join(result)
+
+class AgentState(TypedDict):
+
+    query : str
+    document : Annotated[Sequence[str], add_messages]
+    is_websearch_needed : bool
+    generation : str
+    filter_documents : List
+    unfilter_documents : List
+    retry_count: int
+
+
+class grade_schema(BaseModel):
+    binary_score : Literal["yes", "no"] = Field(..., description="yes or no , wheather given document is revelant to question or not")
+
+
+llm = ChatGroq(
+    model = "qwen/qwen3.8-27b",
+    groq_api_key= GROQ_API_KEY,
+)
+
+
+
+
+
+
 
 
 
