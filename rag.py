@@ -48,7 +48,6 @@ def pdf_loader(path: str):
 
 def web_loader(url : str):
 
-    all_pages = []
     loader = WebBaseLoader(url)
 
     try:
@@ -128,25 +127,35 @@ def hybrid_search(chunks : str):
     return retriever
 
 
-retriever = hybrid_search(chunks=chunks)
-
-while True:
-    query = input("\nAsk a question (or 'exit'): ").strip()
-    if query.lower() in {"exit", "quit", "q"}:
-        break
-
-    results = retriever.invoke(query)
-
-    for i, doc in enumerate(results, 1):
-        score = doc.metadata.get("relevance_score")
-        print(f"\n--- Result {i} (score: {score}) ---")
-        print(doc.page_content[:500])
-        print("Source:", doc.metadata.get("source"), "| Page:", doc.metadata.get("page"))
-
-
-
 if __name__ == "__main__":
-    hybrid_search(chunks=chunks)
+    selected_type = input("Select the document type 'url' or 'pdf :  ").strip().lower()
+
+    if selected_type  == "pdf":
+        path = input("Paste your file path : ").strip().strip('"').strip("'")
+        chunks = pdf_loader(path)
+    elif selected_type == "url":
+        url = input("paste your url : ").strip()
+        chunks = web_loader(url)
+    else:
+        raise ValueError(f"Invalid document type: '{selected_type}'. Must be 'pdf' or 'url'.")
+
+
+    retriever = hybrid_search(chunks=chunks)
+
+    while True:
+        query = input("\nAsk a question (or 'exit'): ").strip()
+        if query.lower() in {"exit", "quit", "q"}:
+            break
+
+        results = retriever.invoke(query)
+
+        for i, doc in enumerate(results, 1):
+            score = doc.metadata.get("relevance_score")
+            print(f"\n--- Result {i} (score: {score}) ---")
+            print(doc.page_content[:500])
+            print("Source:", doc.metadata.get("source"), "| Page:", doc.metadata.get("page"))
+
+
 
 
 
