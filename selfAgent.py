@@ -1,7 +1,7 @@
 import os
 from dotenv import load_dotenv
 from langchain_groq import ChatGroq
-from langchain_core.messages import HumanMessage, AIMessage, BaseMessage
+from langchain_core.messages import HumanMessage, AIMessage, BaseMessage , SystemMessage
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.documents import Document
@@ -75,7 +75,65 @@ llm = ChatGroq(
     groq_api_key= GROQ_API_KEY,
 )
 
+grader_llm = llm.with_structured_output(grade_schema)
 
+
+def retriever_node(state : AgentState) -> AgentState:
+
+    query = state["query"]
+    response =  retriever_tool.invoke(query)
+
+    return {"document": [response] }
+
+
+def grader(state : AgentState) -> dict:
+
+    query = state["query"]
+    document = state["document"]
+
+    system  = """
+            You are a grader evaluating whether a retrieved document is relevant to the user's question.
+
+            Compare the question with the retrieved document.
+
+            - Return "yes" if the document contains information that is relevant and useful for answering the question.
+            - Return "no" if the document is unrelated or does not contain useful information for answering the question.
+
+            Be strict: only return "yes" when the document provides meaningful information related to the question.
+            """
+
+    grader_prompt = ChatPromptTemplate.from_messages([
+        SystemMessage(content=system),
+        HumanMessage(content= "Retrieved content  \n\n query : {query} \n\n document : {document}")
+    ])
+
+    chain = grader_prompt | grader_llm
+
+    filtered_document = []
+    unfiltered_document = []
+
+    for doc in document:
+
+        response =  chain.invoke({
+            "query":query,
+            "document": doc
+        })
+
+        if response.binary_score == "yes":
+            filtered_document.append(doc)
+        elif response.binary_score == "no":
+            unfiltered_document.append(doc)
+
+    
+    return {
+        "filtered_document":filtered_document,
+        "unfiltered_document": unfiltered_document,
+        "question": query,
+    }
+
+
+
+    
 
 
 
