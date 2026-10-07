@@ -17,3 +17,4 @@ cryptography>=42.0.0
 langgraph-checkpoint-sqlite
 pypdf
 streamlit>=1.30.0
+langchain-cohere==0.6.0
