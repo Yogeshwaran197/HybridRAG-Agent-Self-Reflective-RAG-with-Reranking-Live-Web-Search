@@ -1,4 +1,6 @@
 
+from chromadb.api.types import validate_embedding_function
+from langchain_community import vectorstores
 import os
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
@@ -19,7 +21,7 @@ from langchain_community.vectorstores import Chroma
 load_dotenv()
 
 COHERE_API_KEY = os.getenv("COHERE_API_KEY")
-print(COHERE_API_KEY)
+
 
 def pdf_loader(path: str):
 
@@ -77,6 +79,79 @@ elif selected_type == "url":
     chunks = web_loader(url)
 else:
     raise ValueError(f"Invalid document type: '{selected_type}'. Must be 'pdf' or 'url'.")
+
+
+
+def hybrid_search(chunks : str):
+
+    embeddings = HuggingFaceEmbeddings(
+        model_name="BAAI/bge-m3"
+    )
+
+    vectorstore = Chroma.from_documents(
+        embedding = embeddings,
+        documents=chunks,
+        persist_directory="./chroma_pdr",
+        collection_name="hybrid_demo",
+    )
+
+    vector_search = vectorstore.as_retriever(
+        search_type = "mmr",
+        search_kwargs={
+            "k": 10,
+            "fetch_k": 15,
+            "lambda_mult": 0.25
+        }
+    )
+
+    bm25_search = BM25Retriever.from_documents(
+        documents=chunks,
+        k = 10
+    )
+
+    ensemble = EnsembleRetriever(
+        retrievers=[vector_search, bm25_search],
+        weights=[0.7, 0.3]
+    )
+
+    reranker = CohereRerank(
+        model= "rerank-v4.0-pro",
+        top_n = 5,
+        cohere_api_key=COHERE_API_KEY,
+    )
+
+    retriever = ContextualCompressionRetriever(
+        base_compressor=reranker,
+        base_retriever=ensemble
+    )
+
+    return retriever
+
+
+retriever = hybrid_search(chunks=chunks)
+
+while True:
+    query = input("\nAsk a question (or 'exit'): ").strip()
+    if query.lower() in {"exit", "quit", "q"}:
+        break
+
+    results = retriever.invoke(query)
+
+    for i, doc in enumerate(results, 1):
+        score = doc.metadata.get("relevance_score")
+        print(f"\n--- Result {i} (score: {score}) ---")
+        print(doc.page_content[:500])
+        print("Source:", doc.metadata.get("source"), "| Page:", doc.metadata.get("page"))
+
+
+
+if __name__ == "__main__":
+    hybrid_search(chunks=chunks)
+
+
+
+
+
 
 
 
