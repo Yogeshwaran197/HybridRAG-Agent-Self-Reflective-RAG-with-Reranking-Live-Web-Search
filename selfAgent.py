@@ -13,6 +13,7 @@ from psycopg import Connection
 from psycopg.rows import dict_row
 from typing import TypedDict , List
 from pydantic import BaseModel, Field
+from rag import hybrid_search
 
 
 load_dotenv()
@@ -34,6 +35,28 @@ def get_database_url():
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 if not GROQ_API_KEY:
     raise ValueError("Error incorrect API key, please give correct API key")
+
+
+@tool
+def retriever_tool(query : str):
+    """Search and return relevant document chunks from the indexed blog posts about LLM agents, prompt engineering, and adversarial attacks on LLMs. Use this when the question relates to those topics."""
+
+    retriever = hybrid_search()
+    doc = retriever.invoke(query)
+
+    if not doc:
+        print("No Revelant Document fetched")
+
+    result = []
+
+    for d in doc:
+        result.append(f"Document : {d.page_content}")
+    
+    return "\n\n".join(result)
+
+
+
+
 
 
 
