@@ -103,8 +103,8 @@ def grader(state : AgentState) -> dict:
             """
 
     grader_prompt = ChatPromptTemplate.from_messages([
-        SystemMessage(content=system),
-        HumanMessage(content= "Retrieved content  \n\n query : {query} \n\n document : {document}")
+       ("system", system),
+       ("human", "query: {query}\n\ndocument: {document}")
     ])
 
     chain = grader_prompt | grader_llm
@@ -124,12 +124,35 @@ def grader(state : AgentState) -> dict:
         elif response.binary_score == "no":
             unfiltered_document.append(doc)
 
+    if filtered_document:
+        web_search = False
+    elif unfiltered_document:
+        web_search = True
+    
     
     return {
         "filtered_document":filtered_document,
         "unfiltered_document": unfiltered_document,
         "question": query,
+        "is_websearch_needed" : web_search
     }
+
+
+def grader_should_continue(state : AgentState):
+
+    web_search = state["is_websearch_needed"]
+
+    if web_search:
+        return "generator"
+    else:
+        return "rewrite_query"
+
+    
+
+        
+    
+
+
 
 
 
