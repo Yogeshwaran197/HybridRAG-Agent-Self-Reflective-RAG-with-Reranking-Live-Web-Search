@@ -1,3 +1,4 @@
+from langsmith.schemas import AgentEntry
 from ast import Dict
 import os
 from dotenv import load_dotenv
@@ -195,6 +196,42 @@ def rewriter_should_continue(state : AgentState) -> Dict:
         return "web_search"
     else:
         return "retriever"
+
+
+def generator_node(state : AgentState)  -> Dict:
+
+
+    query = state["query"]
+    context = "\n\n".join(state["filter_documents"])
+
+    system = """
+        You are a helpful assistant that answers questions using only the provided context.
+
+        Rules:
+        - Answer using ONLY the information in the context.
+        - If the context does not contain enough information, say "I don't have enough information to answer that." Do not guess.
+        - Do not use outside knowledge and do not make up facts.
+        - Be clear and concise. Use bullet points only when they make the answer easier to read.
+        - If the context has several pieces of information, combine them into one answer.
+        """
+
+    generator_prompt = ChatPromptTemplate.from_messages(
+        ("system", system),
+        ("user", "\n\n Query : {query} \n\n context : {context}")
+    )
+
+    generator_chain =  generator_prompt | llm | StrOutputParser()
+
+    response =  generator_chain.invoke({
+        "query" : query,
+        "context" : context
+    })
+
+    return {
+        "generation" : response
+    }
+
+d
 
 
 
