@@ -17,6 +17,7 @@ from psycopg.rows import dict_row
 from typing import TypedDict , List, Annotated , Sequence, Literal
 from pydantic import BaseModel, Field
 from rag import hybrid_search
+from mcp_tool import tavily_search
 
 
 load_dotenv()
@@ -57,6 +58,9 @@ def retriever_tool(query : str):
     
     return "\n\n".join(result)
 
+tools = [retriever_tool]
+llm_with_tools = llm.bind_tools(tools)
+
 class AgentState(TypedDict):
 
     query : str
@@ -84,7 +88,7 @@ grader_llm = llm.with_structured_output(grade_schema)
 def retriever_node(state : AgentState) -> AgentState:
 
     query = state["query"]
-    response =  retriever_tool.invoke(query)
+    response =  llm_with_tools.invoke(query)
 
     return {"document": [response] }
 
@@ -291,6 +295,34 @@ def check_should_continue(state: AgentState) :
         return "End"
     else :
         return "web_search"
+
+
+def webSearch(state : AgentState) :
+
+    query = state["query"]
+
+    decision = Interrupt({
+        "action" : "Web Search",
+        "query" : query,
+        "approval" : "Allow web Search?"
+    })
+
+    if decision != "y":
+        return "web search cancelled  by user, don't retry until user ask gain"
+
+    
+    response = tavily_search(query)
+    
+    return {
+        "filter_documents" : response
+    }
+
+
+
+
+    
+
+
 
 
 

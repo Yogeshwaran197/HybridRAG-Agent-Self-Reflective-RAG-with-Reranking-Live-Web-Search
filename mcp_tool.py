@@ -1,6 +1,7 @@
-from aiohttp import base_protocol
+
 import os
 import asyncio
+import json
 from dotenv import load_dotenv
 from langchain_mcp_adapters.client import MultiServerMCPClient
 
@@ -30,18 +31,16 @@ async def tavily_search(query):
 
     result = await tavily_search.ainvoke({
     "query": query
-})
+    })
 
-    structured_result = {
-        "query": query,
-        "results": []
-    }
+    data = json.loads(result[0]["text"])
 
-    for block in result:
-        if block["type"] == "text":
-            structured_result["results"].append(block["text"])
+    context = "\n\n".join(
+        item["content"]
+        for item in data["results"]
+    )
 
-    print(structured_result)
+    print(context)
     
 if __name__ == "__main__":
-    asyncio.run(tavily_search())
+    asyncio.run(tavily_search("what is ai?"))
