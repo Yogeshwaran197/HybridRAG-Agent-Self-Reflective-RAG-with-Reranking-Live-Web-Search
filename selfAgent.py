@@ -66,6 +66,7 @@ class AgentState(TypedDict):
     filter_documents : List
     unfilter_documents : List
     retry_count: int
+    grounded : bool
 
 
 class grade_schema(BaseModel):
@@ -228,10 +229,68 @@ def generator_node(state : AgentState)  -> Dict:
     })
 
     return {
-        "generation" : response
+        "generation" : response,
+        "query" : query
     }
 
-d
+class check_schema(BaseModel):
+    is_grounded: Literal["yes", "no"] = Field(..., description="yes if every claim in the answer is supported by the context")
+    answers_question: Literal["yes", "no"] = Field(..., description="yes if the answer actually addresses the question")
+
+check_llm =  llm.with_structured_output(check_schema)
+
+
+def check_answer(state : AgentState) -> Dict:
+
+    query = state["query"]
+    generated_answer  = state["generation"]
+
+    system = """
+            You are a strict checker. You are given a context, a question, and an answer.
+            Do two checks:
+
+            1. is_grounded: Is every claim in the answer supported by the context?
+            Return "no" if the answer contains any fact, number, or detail that is not in the context.
+
+            2. answers_question: Does the answer actually address what the question asks?
+            Return "no" if the answer is off-topic, incomplete, or says it doesn't have enough information.
+
+            Be strict. Judge only from the context given. Do not use your own knowledge.
+            """
+
+    check_prompt = ChatPromptTemplate.from_messages([
+        ("system", system),
+        ("user", "here's the full details: \n question : {query} \n\n context : {context} \n\n answer : {answer}  ")
+    ])
+
+    
+    check_answer_chain = check_prompt | check_llm
+
+    response =  check_answer_chain.invoke({
+        "query" : query,
+        "context" : "\n\n".join(state["filter_documents"]),
+        "answer": generated_answer
+    })
+
+    if response.is_grounded == "yes".strip().lower() and response.answers_question == "yes".strip().lower():
+        grounded = True
+    else:
+        grounded = False
+    
+
+    return {
+        "grounded" : grounded
+    }
+
+
+    
+
+
+
+    
+
+
+
 
 
 
