@@ -1,3 +1,4 @@
+from ast import Dict
 import os
 from dotenv import load_dotenv
 from langchain_groq import ChatGroq
@@ -148,7 +149,7 @@ def grader_should_continue(state : AgentState):
         return "rewrite_query"
 
 
-def rewrite_query(state :AgentState ) -> AgentState:
+def rewrite_query(state :AgentState ) -> Dict:
 
     query = state["query"]
     retry_conut =  state.get('retry_count', 0) + 1   
@@ -185,6 +186,15 @@ def rewrite_query(state :AgentState ) -> AgentState:
         "retry_count" : retry_conut
     }
 
+
+def rewriter_should_continue(state : AgentState) -> Dict:
+
+    retry_count = state["retry_count"]
+
+    if retry_count >= 2 :
+        return "web_search"
+    else:
+        return "retriever"
 
 
 
