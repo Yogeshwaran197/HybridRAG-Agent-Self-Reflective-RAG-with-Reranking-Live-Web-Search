@@ -283,6 +283,16 @@ def check_answer(state : AgentState) -> Dict:
     }
 
 
+def check_should_continue(state: AgentState) :
+
+    grounded = state["grounded"]
+
+    if grounded:
+        return "End"
+    else :
+        return "web_search"
+
+
     
 
 
