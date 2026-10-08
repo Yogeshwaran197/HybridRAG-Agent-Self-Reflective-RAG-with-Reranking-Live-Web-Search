@@ -133,7 +133,7 @@ def grader(state : AgentState) -> dict:
     return {
         "filtered_document":filtered_document,
         "unfiltered_document": unfiltered_document,
-        "question": query,
+        "query": query,
         "is_websearch_needed" : web_search
     }
 
@@ -146,6 +146,51 @@ def grader_should_continue(state : AgentState):
         return "generator"
     else:
         return "rewrite_query"
+
+
+def rewrite_query(state :AgentState ) -> AgentState:
+
+    query = state["query"]
+    retry_conut =  state.get('retry_count', 0) + 1   
+
+    system = """
+        You are a query rewriter for a search system. The user's question did not retrieve
+        useful documents, so rewrite it to get better search results.
+
+        Rules:
+        - Keep the original meaning and intent. Do not change what is being asked.
+        - Make the question more specific and clear.
+        - Replace vague words with precise keywords, and spell out abbreviations.
+        - Add closely related terms or synonyms that a relevant document might use.
+        - Remove filler words and anything that isn't needed for searching.
+        - Do NOT answer the question and do NOT add facts that the question doesn't imply.
+
+        Return ONLY the rewritten question as one line. No explanation, no quotes.
+        """
+
+    
+    rewriter_prompt = ChatPromptTemplate.from_messages(
+        ("system" , system),
+        ("human" , "Original question: {query} ")
+    )
+
+    rewriter_chain  = rewriter_prompt | llm | StrOutputParser()
+
+    response =  rewriter_chain.invoke({
+        "query" : query
+    })
+
+    return {
+        "query" : response,
+        "retry_count" : retry_conut
+    }
+
+
+
+
+
+
+
 
     
 
