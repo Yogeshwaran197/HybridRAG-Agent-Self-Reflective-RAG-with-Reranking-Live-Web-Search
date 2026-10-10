@@ -1,3 +1,4 @@
+import psycopg
 from langsmith.schemas import AgentEntry
 from ast import Dict
 import os
@@ -58,8 +59,6 @@ def retriever_tool(query : str):
     
     return "\n\n".join(result)
 
-tools = [retriever_tool]
-llm_with_tools = llm.bind_tools(tools)
 
 class AgentState(TypedDict):
 
@@ -71,6 +70,7 @@ class AgentState(TypedDict):
     unfilter_documents : List
     retry_count: int
     grounded : bool
+    web_search_done : bool
 
 
 class grade_schema(BaseModel):
@@ -81,6 +81,9 @@ llm = ChatGroq(
     model = "qwen/qwen3.8-27b",
     groq_api_key= GROQ_API_KEY,
 )
+
+tools = [retriever_tool]
+llm_with_tools = llm.bind_tools(tools)
 
 grader_llm = llm.with_structured_output(grade_schema)
 
@@ -286,16 +289,10 @@ def check_answer(state : AgentState) -> Dict:
         "grounded" : grounded
     }
 
-
-def check_should_continue(state: AgentState) :
-
-    grounded = state["grounded"]
-
-    if grounded:
+def check_should_continue(state: AgentState):
+    if state["grounded"] or state.get("web_search_done", False):
         return "End"
-    else :
-        return "web_search"
-
+    return "web_search"
 
 def webSearch(state : AgentState) :
 
@@ -308,30 +305,115 @@ def webSearch(state : AgentState) :
     })
 
     if decision != "y":
-        return "web search cancelled  by user, don't retry until user ask gain"
+        return {
+            "generation": "Web search cancelled by user.",
+            "web_search_done": True,
+        }
 
-    
     response = tavily_search(query)
-    
+
     return {
-        "filter_documents" : response
+        "filter_documents": response,
+        "web_search_done": True,
+    }
+
+graph = StateGraph(AgentState)
+
+graph.add_node("retriever" , retriever_node)
+graph.add_node("grader", grader)
+graph.add_node("rewriter", rewrite_query)
+graph.add_node("websearcher" , webSearch)
+graph.add_node("generator", generator_node)
+graph.add_node("checker", check_answer)
+
+
+graph.add_edge(START , "retriever")
+graph.add_edge("retriever", "grader")
+graph.add_conditional_edges(
+    "grader",
+    grader_should_continue,
+    {
+        "generator" : "generator",
+        "rewrite_query" : "rewriter"
+    }
+)
+graph.add_conditional_edges(
+    "rewriter",
+    rewriter_should_continue,
+    {
+        "web_search" : "websearcher",
+        "retriever" : "retriever",
+    }
+)
+graph.add_edge("websearcher", "generator")
+graph.add_edge("generator" , "checker")
+graph.add_conditional_edges(
+    "checker",
+    check_should_continue,
+    {
+        "End" : END,
+        "web_search" : "websearcher"
+    }
+)
+
+
+database_url =  get_database_url()
+
+conn =  psycopg.connect(
+    database_url,
+    row_factory= dict_row,
+    autocommit=True
+)
+
+checkpointer = PostgresSaver(
+    conn
+)
+checkpointer.setup()
+
+
+HybridRag = graph.compile(checkpointer=checkpointer)
+
+
+
+if __name__ == "__main__":
+ 
+    user_query =  input("Query ? ")
+    input = {
+        "query" : user_query,
+        "document" : [],
+        "generation" : "",
+        "filter_documents" : [],
+        "unfilter_documents" :[],
+        "retry_count": 0,
+        "web_search_done": False,
+    }   
+
+    config = {
+        "configurable" : {
+            "thread_id" : "yogi-1"
+        }
     }
 
 
+    while True:
 
+        result = HybridRag.invoke(
+            input,
+            config=config
+        )
 
-    
+        if "__interrupt__" not in result:
+            print(result['generation'].content)
+        
+        interrupt_payload = result["__interrupt__"][0].value
 
+        print(f"\nApproval for web searh : {interrupt_payload}")
 
+        answer =  input("Y/N Allow WebSearch ? ")
 
+        input = Command(resume=answer)
 
-
-    
-
-
-
-    
-
+        
 
 
 
