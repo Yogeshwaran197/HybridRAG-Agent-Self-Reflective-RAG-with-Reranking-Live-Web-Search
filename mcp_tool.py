@@ -40,7 +40,7 @@ async def tavily_search(query):
         for item in data["results"]
     )
 
-    print(context)
+    return [item["content"][:1500] for item in data["results"][:3]]
     
 if __name__ == "__main__":
     asyncio.run(tavily_search("what is ai?"))

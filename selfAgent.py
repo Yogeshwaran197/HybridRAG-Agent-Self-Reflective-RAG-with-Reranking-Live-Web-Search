@@ -1,6 +1,7 @@
 import psycopg
 import os
 import uuid
+import asyncio
 from dotenv import load_dotenv
 from langchain_groq import ChatGroq
 from langchain_core.messages import HumanMessage, AIMessage, BaseMessage , SystemMessage
@@ -53,7 +54,7 @@ def retriever_tool(query : str):
         print("No Revelant Document fetched")
     
       # job 2, runs per question
-    return "\n\n".join(d.page_content for d in doc)
+    return [d.page_content for d in doc]
 
 
 class AgentState(TypedDict):
@@ -76,7 +77,7 @@ class grade_schema(BaseModel):
 
 
 llm = ChatGroq(
-    model = "qwen/qwen3.8-27b",
+    model = "openai/gpt-oss-120b",
     groq_api_key= GROQ_API_KEY,
 )
 
@@ -308,7 +309,7 @@ def webSearch(state : AgentState) :
         return update
 
 
-    response = tavily_search(query)
+    response = asyncio.run(tavily_search(query))
 
     return {
         "filter_documents": response,
@@ -386,47 +387,43 @@ checkpointer.setup()
 HybridRag = graph.compile(checkpointer=checkpointer)
 
 
-
 if __name__ == "__main__":
- 
-    user_query =  input("Query ? ")
-    inputs = {
-        "query" : user_query,
-        "original_query" : user_query,
-        "document" : [],
-        "generation" : "",
-        "filter_documents" : [],
-        "unfilter_documents" :[],
-        "retry_count": 0,
-        "web_search_done": False,
-        "web_search_cancelled": False, 
-    }   
 
-    config = {
-        "configurable" : {
-            "thread_id" : str(uuid.uuid4())
-        }
-    }
+    while True:  # OUTER loop: one pass per question
 
-
-    while True:
-
-        result = HybridRag.invoke(
-            inputs,
-            config=config
-        )
-
-        if "__interrupt__" not in result:
-            print(result['generation'])
+        user_query = input("\nAsk your question ('exit' to quit): ").strip()
+        if user_query.lower() in {"exit", "quit", "q"}:
             break
-        
-        interrupt_payload = result["__interrupt__"][0].value
+        if not user_query:
+            continue
 
-        print(f"\nApproval for web searh : {interrupt_payload}")
+        inputs = {
+            "query": user_query,
+            "original_query": user_query,
+            "document": [],
+            "generation": "",
+            "filter_documents": [],
+            "unfilter_documents": [],
+            "retry_count": 0,
+            "grounded": False,
+            "web_search_done": False,
+            "web_search_cancelled": False,
+        }
 
-        answer =  input("Y/N Allow WebSearch ? ")
+        config = {"configurable": {"thread_id": str(uuid.uuid4())}}
 
-        inputs = Command(resume=answer)
+        while True:  # INNER loop: only for the approval pause
+
+            result = HybridRag.invoke(inputs, config=config)
+
+            if "__interrupt__" not in result:
+                print("\n" + result["generation"])
+                break  # exits INNER loop only, so the outer loop asks the next question
+
+            payload = result["__interrupt__"][0].value
+            print(f"\nApproval for web search: {payload}")
+            answer = input("Y/N Allow web search? ")
+            inputs = Command(resume=answer)
 
         
 
