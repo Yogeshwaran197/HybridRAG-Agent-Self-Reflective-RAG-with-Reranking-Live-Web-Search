@@ -81,7 +81,6 @@ else:
     raise ValueError(f"Invalid document type: '{selected_type}'. Must be 'pdf' or 'url'.")
 
 
-
 def hybrid_search(chunks : str):
 
     embeddings = HuggingFaceEmbeddings(

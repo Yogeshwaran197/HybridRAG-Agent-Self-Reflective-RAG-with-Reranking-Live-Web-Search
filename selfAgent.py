@@ -1,7 +1,6 @@
 import psycopg
-from langsmith.schemas import AgentEntry
-from ast import Dict
 import os
+import uuid
 from dotenv import load_dotenv
 from langchain_groq import ChatGroq
 from langchain_core.messages import HumanMessage, AIMessage, BaseMessage , SystemMessage
@@ -11,15 +10,17 @@ from langchain_core.documents import Document
 from langchain_core.tools import tool
 from langgraph.graph import StateGraph, START, END
 from langgraph.graph.message import add_messages
-from langgraph.types import Command , Interrupt
+from langgraph.types import Command , interrupt
 from langgraph.checkpoint.postgres import PostgresSaver
-from psycopg import Connection
+from psycopg import connect
 from psycopg.rows import dict_row
-from typing import TypedDict , List, Annotated , Sequence, Literal
+from typing import TypedDict , List, Annotated , Sequence, Literal , Dict
 from pydantic import BaseModel, Field
-from rag import hybrid_search
+from rag import hybrid_search , chunks
 from mcp_tool import tavily_search
 
+
+retriever = hybrid_search(chunks)
 
 load_dotenv()
 
@@ -46,24 +47,20 @@ if not GROQ_API_KEY:
 def retriever_tool(query : str):
     """Search and return relevant document chunks from the indexed blog posts about LLM agents, prompt engineering, and adversarial attacks on LLMs. Use this when the question relates to those topics."""
 
-    retriever = hybrid_search()
     doc = retriever.invoke(query)
 
     if not doc:
         print("No Revelant Document fetched")
-
-    result = []
-
-    for d in doc:
-        result.append(f"Document : {d.page_content}")
     
-    return "\n\n".join(result)
+      # job 2, runs per question
+    return "\n\n".join(d.page_content for d in doc)
 
 
 class AgentState(TypedDict):
 
     query : str
-    document : Annotated[Sequence[str], add_messages]
+    original_query : str
+    document : List[str]
     is_websearch_needed : bool
     generation : str
     filter_documents : List
@@ -71,6 +68,7 @@ class AgentState(TypedDict):
     retry_count: int
     grounded : bool
     web_search_done : bool
+    web_search_cancelled : bool 
 
 
 class grade_schema(BaseModel):
@@ -82,8 +80,6 @@ llm = ChatGroq(
     groq_api_key= GROQ_API_KEY,
 )
 
-tools = [retriever_tool]
-llm_with_tools = llm.bind_tools(tools)
 
 grader_llm = llm.with_structured_output(grade_schema)
 
@@ -91,9 +87,11 @@ grader_llm = llm.with_structured_output(grade_schema)
 def retriever_node(state : AgentState) -> AgentState:
 
     query = state["query"]
-    response =  llm_with_tools.invoke(query)
+    docs =  retriever_tool.invoke(query)
+    
 
-    return {"document": [response] }
+    return {"document":docs }
+
 
 
 def grader(state : AgentState) -> dict:
@@ -136,13 +134,13 @@ def grader(state : AgentState) -> dict:
 
     if filtered_document:
         web_search = False
-    elif unfiltered_document:
+    else:
         web_search = True
     
     
     return {
-        "filtered_document":filtered_document,
-        "unfiltered_document": unfiltered_document,
+        "filter_documents":filtered_document,
+        "unfilter_documents": unfiltered_document,
         "query": query,
         "is_websearch_needed" : web_search
     }
@@ -153,9 +151,9 @@ def grader_should_continue(state : AgentState):
     web_search = state["is_websearch_needed"]
 
     if web_search:
-        return "generator"
+        return "rewrite_query" 
     else:
-        return "rewrite_query"
+        return "generator"
 
 
 def rewrite_query(state :AgentState ) -> Dict:
@@ -179,10 +177,10 @@ def rewrite_query(state :AgentState ) -> Dict:
         """
 
     
-    rewriter_prompt = ChatPromptTemplate.from_messages(
+    rewriter_prompt = ChatPromptTemplate.from_messages([
         ("system" , system),
         ("human" , "Original question: {query} ")
-    )
+    ])
 
     rewriter_chain  = rewriter_prompt | llm | StrOutputParser()
 
@@ -209,7 +207,7 @@ def rewriter_should_continue(state : AgentState) -> Dict:
 def generator_node(state : AgentState)  -> Dict:
 
 
-    query = state["query"]
+    query = state["original_query"]
     context = "\n\n".join(state["filter_documents"])
 
     system = """
@@ -223,21 +221,20 @@ def generator_node(state : AgentState)  -> Dict:
         - If the context has several pieces of information, combine them into one answer.
         """
 
-    generator_prompt = ChatPromptTemplate.from_messages(
+    generator_prompt = ChatPromptTemplate.from_messages([
         ("system", system),
         ("user", "\n\n Query : {query} \n\n context : {context}")
-    )
+    ])
 
     generator_chain =  generator_prompt | llm | StrOutputParser()
 
     response =  generator_chain.invoke({
-        "query" : query,
-        "context" : context
+        "context" : context,
+        "query" : query
     })
 
     return {
         "generation" : response,
-        "query" : query
     }
 
 class check_schema(BaseModel):
@@ -249,7 +246,7 @@ check_llm =  llm.with_structured_output(check_schema)
 
 def check_answer(state : AgentState) -> Dict:
 
-    query = state["query"]
+    query = state["original_query"]
     generated_answer  = state["generation"]
 
     system = """
@@ -298,24 +295,32 @@ def webSearch(state : AgentState) :
 
     query = state["query"]
 
-    decision = Interrupt({
+    decision = interrupt({
         "action" : "Web Search",
         "query" : query,
         "approval" : "Allow web Search?"
     })
 
-    if decision != "y":
-        return {
-            "generation": "Web search cancelled by user.",
-            "web_search_done": True,
-        }
+    if str(decision).strip().lower() != "y":
+        update = {"web_search_done": True, "web_search_cancelled": True}
+        if not state.get("generation"):
+            update["generation"] = "Web search cancelled by user."
+        return update
+
 
     response = tavily_search(query)
 
     return {
         "filter_documents": response,
         "web_search_done": True,
+        "web_search_cancelled": False,  
     }
+
+
+def websearch_should_continue(state: AgentState):
+    if state.get("web_search_cancelled", False):
+        return "End"
+    return "generator"
 
 graph = StateGraph(AgentState)
 
@@ -345,7 +350,14 @@ graph.add_conditional_edges(
         "retriever" : "retriever",
     }
 )
-graph.add_edge("websearcher", "generator")
+graph.add_conditional_edges(
+    "websearcher",
+    websearch_should_continue,
+    {
+        "End": END,
+        "generator": "generator"
+    }
+)
 graph.add_edge("generator" , "checker")
 graph.add_conditional_edges(
     "checker",
@@ -378,19 +390,21 @@ HybridRag = graph.compile(checkpointer=checkpointer)
 if __name__ == "__main__":
  
     user_query =  input("Query ? ")
-    input = {
+    inputs = {
         "query" : user_query,
+        "original_query" : user_query,
         "document" : [],
         "generation" : "",
         "filter_documents" : [],
         "unfilter_documents" :[],
         "retry_count": 0,
         "web_search_done": False,
+        "web_search_cancelled": False, 
     }   
 
     config = {
         "configurable" : {
-            "thread_id" : "yogi-1"
+            "thread_id" : str(uuid.uuid4())
         }
     }
 
@@ -398,12 +412,13 @@ if __name__ == "__main__":
     while True:
 
         result = HybridRag.invoke(
-            input,
+            inputs,
             config=config
         )
 
         if "__interrupt__" not in result:
-            print(result['generation'].content)
+            print(result['generation'])
+            break
         
         interrupt_payload = result["__interrupt__"][0].value
 
@@ -411,7 +426,7 @@ if __name__ == "__main__":
 
         answer =  input("Y/N Allow WebSearch ? ")
 
-        input = Command(resume=answer)
+        inputs = Command(resume=answer)
 
         
 
